@@ -2,7 +2,7 @@
 /*! 
     @file     BaseDefinitions.h
     @author   Sebastien Warin (http://sebastien.warin.fr)
-    @version  2.1.16296
+    @version  2.2.16341
 
     @section LICENSE
 
@@ -26,6 +26,7 @@
 
 #define HTTP_OK 200
 #define HTTP_NO_CONTENT 204
+#define HTTP_SERVER_ERROR 500
 
 #define WILDCARD "*"
 

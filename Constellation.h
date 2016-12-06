@@ -2,7 +2,7 @@
 /*!
     @file     Constellation.h
     @author   Sebastien Warin (http://sebastien.warin.fr)
-    @version  2.1.16308
+    @version  2.2.16341
 
     @section LICENSE
 
@@ -87,6 +87,7 @@ class Constellation
     LinkedList<MessageCallbackSubscription> _msgCallbacks = LinkedList<MessageCallbackSubscription>();
     LinkedList<StateObjectSubscription> _soCallbacks = LinkedList<StateObjectSubscription>();
     LinkedList<TypeDescriptorItem> _typeDescriptors = LinkedList<TypeDescriptorItem>();
+    LinkedList<const char*> _msgGroups = LinkedList<const char*>();
     
     void addTypeDescriptor(const char* typeName, DescriptorType descriptorType, TypeDescriptor typeDescriptor) {
         TypeDescriptorItem type;
@@ -365,6 +366,34 @@ class Constellation
         }
     }
 
+    void renewSubscriptions() {
+        log_debug("Renew the message subscription");
+        if(!subscribeToMessage(true)) {
+            log_error("Unable to renew the message subscription");
+            return;
+        }
+        if(_msgGroups.size() > 0) {
+            for(int i = 0; i < _msgGroups.size(); i++) {
+                const char* group = _msgGroups.get(i);
+                log_debug("Renew subscription for the group %s", group);
+                if(!subscribeToGroup(group, true)) {
+                    log_error("Unable to renew the subscription for the group %s", group);
+                    return;
+                }
+            }
+         }
+        if(_soCallbacks.size() > 0) {
+            for(int i = 0; i < _soCallbacks.size(); i++) {
+                StateObjectSubscription subcription = _soCallbacks.get(i);
+                log_debug("Renew the subscription for the StateObjects %s/%s/%s/%s", subcription.sentinel, subcription.package, subcription.name, subcription.type);
+                if(!subscribeToStateObjects(subcription.sentinel, subcription.package, subcription.name, subcription.type)) {
+                    log_error("Unable to renew the subscription for the StateObjects %s/%s/%s/%s", subcription.sentinel, subcription.package, subcription.name, subcription.type);
+                    return;
+                }
+            }
+         }
+    }
+
   public:
     Constellation() { };
     Constellation(const char * constellationHost, uint16_t constellationPort) {
@@ -462,6 +491,10 @@ class Constellation
                         log_error("Unable to parse the incoming message");
                     }
                 }
+                else if(statusCode == HTTP_SERVER_ERROR) {
+                    log_error("Unable to get messages : internal server error");
+                    renewSubscriptions();
+                }
             }
             // Do request
             String strTimeout = String(timeout);
@@ -506,11 +539,11 @@ class Constellation
                                     const char * type = array[i]["StateObject"]["Type"].asString();
                                     for(int j = 0; j < _soCallbacks.size(); j++) {
                                         StateObjectSubscription subcription = _soCallbacks.get(j);
-                                        if(    (stricmp (sentinel, subcription.sentinel) == 0 || stricmp (WILDCARD, subcription.sentinel) == 0) &&
+                                        if( (stricmp (sentinel, subcription.sentinel) == 0 || stricmp (WILDCARD, subcription.sentinel) == 0) &&
                                             (stricmp (package, subcription.package) == 0 || stricmp (WILDCARD, subcription.package) == 0) &&
                                             (stricmp (name, subcription.name) == 0 || stricmp (WILDCARD, subcription.name) == 0) &&
                                             (stricmp (type, subcription.type) == 0 || stricmp (WILDCARD, subcription.type) == 0)) {
-                                            log_debug("Invoking StateObjectLink registered for %s/%s/%s/%s", subcription.sentinel, subcription.package, subcription.name, subcription.type);                                           
+                                            log_debug("Invoking StateObjectLink registered for %s/%s/%s/%s", subcription.sentinel, subcription.package, subcription.name, subcription.type);
                                             subcription.soCallback(array[i]["StateObject"]);
                                         }
                                     }
@@ -521,6 +554,10 @@ class Constellation
                     else {
                         log_error("Unable to parse the StateObjects array");
                     }
+                }
+                else if(statusCode == HTTP_SERVER_ERROR) {
+                    log_error("Unable to get StateObjectLinks : internal server error");
+                    renewSubscriptions();
                 }
             }
             // Do request
@@ -534,7 +571,7 @@ class Constellation
         }
     };
 
-    bool subscribeToMessage() {
+    bool subscribeToMessage(bool renew = false) {
         if(this->_msgSubscriptionId == NULL) {
             String response = "";
             if(sendRequest("SubscribeToMessage", NULL, 0, &response) == HTTP_OK && response.length() == SUBSCRIPTIONID_SIZE + 2) {
@@ -544,10 +581,17 @@ class Constellation
                 log_info("SubscribeToMessage:OK - Subscription Id = %s", this->_msgSubscriptionId);
             }
         }
+        else if(renew) {
+            const char* args[] = { "subscriptionId", this->_msgSubscriptionId };
+            return sendRequest("SubscribeToMessage", args, 1, NULL) == HTTP_OK;
+        }
         return this->_msgSubscriptionId != NULL;
     };
-    bool subscribeToGroup(const char* groupName) {
+    bool subscribeToGroup(const char* groupName, bool renew = false) {
         if(subscribeToMessage()) {
+            if(!renew) {
+                _msgGroups.add(groupName);
+            }
             const char* args[] = { "subscriptionId", this->_msgSubscriptionId, "group", groupName };
             return sendRequest("SubscribeToMessageGroup", args, 2, NULL) == HTTP_OK;
         }
@@ -632,7 +676,7 @@ class Constellation
             }
         }
         else {
-            const char* args[] = { "subscriptionId", this->_msgSubscriptionId, "sentinel", sentinel, "package", package, "name", name, "type", type };
+            const char* args[] = { "subscriptionId", this->_soSubscriptionId, "sentinel", sentinel, "package", package, "name", name, "type", type };
             return sendRequest("SubscribeToStateObjects", args, 5, NULL) == HTTP_OK;
         }
     };
