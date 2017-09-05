@@ -2,13 +2,13 @@
 /*!
     @file     Constellation.h
     @author   Sebastien Warin (http://sebastien.warin.fr)
-    @version  2.2.16341
+    @version  2.2.17248
 
     @section LICENSE
 
     Constellation License Agreement
 
-    Copyright (c) 2015-2016, Sebastien Warin
+    Copyright (c) 2015-2017, Sebastien Warin
     All rights reserved.
 
     By receiving, opening the file package, and/or using Constellation 1.8("Software")
@@ -327,6 +327,8 @@ class Constellation
                 case 4:
                     Serial.print("[TRACE] ");
                     break;
+                default:
+                    break;
             }            
             static char internal_log[STRING_FORMAT_BUFFER];
             vsnprintf(internal_log, STRING_FORMAT_BUFFER, message, myargs);
@@ -448,13 +450,13 @@ class Constellation
                         if(_msgCallback || _msgCallbackWithContext || _msgCallbacks.size() > 0) {
                             for(int i=0; i < array.size(); i++) {
                                 MessageContext ctx;
-                                ctx.messageKey = array[i]["Key"].asString(); 
-                                ctx.sagaId = array[i]["Scope"]["SagaId"].asString();
+                                ctx.messageKey = array[i]["Key"].as<char *>(); 
+                                ctx.sagaId = array[i]["Scope"]["SagaId"].as<char *>();
                                 ctx.scope = (ScopeType)array[i]["Scope"]["Scope"].as<uint8_t>();
                                 ctx.isSaga = ctx.sagaId != NULL;
                                 ctx.sender.type = (SenderType)array[i]["Sender"]["Type"].as<uint8_t>();
-                                ctx.sender.friendlyName = array[i]["Sender"]["FriendlyName"].asString();
-                                ctx.sender.connectionId = array[i]["Sender"]["ConnectionId"].asString();
+                                ctx.sender.friendlyName = array[i]["Sender"]["FriendlyName"].as<char *>();
+                                ctx.sender.connectionId = array[i]["Sender"]["ConnectionId"].as<char *>();
                                 log_debug("Receiving message %s from %s\n", ctx.messageKey, ctx.sender.friendlyName);
                                 if(_msgCallback) {
                                     log_debug("Invoking MessageReceiveCallback registered without context");
@@ -533,10 +535,10 @@ class Constellation
                                     _soCallback(array[i]["StateObject"]);
                                 }
                                 if(_soCallbacks.size() > 0) {
-                                    const char * sentinel = array[i]["StateObject"]["SentinelName"].asString(); 
-                                    const char * package = array[i]["StateObject"]["PackageName"].asString();
-                                    const char * name = array[i]["StateObject"]["Name"].asString();
-                                    const char * type = array[i]["StateObject"]["Type"].asString();
+                                    const char * sentinel = array[i]["StateObject"]["SentinelName"].as<char *>(); 
+                                    const char * package = array[i]["StateObject"]["PackageName"].as<char *>();
+                                    const char * name = array[i]["StateObject"]["Name"].as<char *>();
+                                    const char * type = array[i]["StateObject"]["Type"].as<char *>();
                                     for(int j = 0; j < _soCallbacks.size(); j++) {
                                         StateObjectSubscription subcription = _soCallbacks.get(j);
                                         if( (stricmp (sentinel, subcription.sentinel) == 0 || stricmp (WILDCARD, subcription.sentinel) == 0) &&
@@ -579,6 +581,9 @@ class Constellation
                 response.substring(1, SUBSCRIPTIONID_SIZE + 2).toCharArray(subId, sizeof(subId));
                 this->_msgSubscriptionId = subId;
                 log_info("SubscribeToMessage:OK - Subscription Id = %s", this->_msgSubscriptionId);
+            }
+            else {
+                log_error("Unable to SubscribeToMessage");
             }
         }
         else if(renew) {
@@ -672,8 +677,11 @@ class Constellation
             }
             else if(response == "null") {
                 log_error("Unable to SubscribeToStateObjects : check your credential !");
-                return false;
             }
+            else {
+                log_error("Unable to SubscribeToStateObjects");
+            }
+            return this->_soSubscriptionId != NULL;
         }
         else {
             const char* args[] = { "subscriptionId", this->_soSubscriptionId, "sentinel", sentinel, "package", package, "name", name, "type", type };

@@ -21,7 +21,7 @@ License
 
 Constellation License Agreement
 
-Copyright (c) 2015-2016, Sebastien Warin
+Copyright (c) 2015-2017, Sebastien Warin
 All rights reserved.
 
 By receiving, opening the file package, and/or using Constellation 1.8("Software")

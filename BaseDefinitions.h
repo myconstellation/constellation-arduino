@@ -2,13 +2,13 @@
 /*! 
     @file     BaseDefinitions.h
     @author   Sebastien Warin (http://sebastien.warin.fr)
-    @version  2.2.16341
+    @version  2.2.17248
 
     @section LICENSE
 
     Constellation License Agreement
 
-    Copyright (c) 2015-2016, Sebastien Warin
+    Copyright (c) 2015-2017, Sebastien Warin
     All rights reserved.
 
     By receiving, opening the file package, and/or using Constellation 1.8("Software")

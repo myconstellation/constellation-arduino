@@ -45,7 +45,7 @@ void setup(void) {
   // Getting setting value of your virtual package
   JsonObject& settings = constellation.getSettings();
   static int numberTest = settings["numberTest"].as<int>();
-  static String stringTest = String(settings["stringTest"].asString());
+  static String stringTest = String(settings["stringTest"].as<char *>());
   
   // Expose a MessageCallback to reboot the device (ESP only)
   constellation.registerMessageCallback("Reboot",

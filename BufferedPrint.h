@@ -31,6 +31,8 @@ class BufferedPrint : public Print {
         if (_size + 1 == CAPACITY) {
             flush();
         }
+
+        return 1;
     }
 
     void flush() {
