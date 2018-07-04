@@ -47,6 +47,7 @@
 #define DEFAULT_SUBSCRIPTION_TIMEOUT 60000
 #define DEFAULT_SUBSCRIPTION_LIMIT 1
 #define SUBSCRIPTIONID_SIZE 36
+#define DEFAULT_REQUEST_TIMEOUT 30000
 
 template<typename TNetworkClass>
 class Constellation
@@ -200,7 +201,14 @@ class Constellation
             log_info("Unable to send the request !");
             return false;
         }
-        delay(10);
+        // Wait a response
+        unsigned long timeout = millis();
+        while (_netClient.available() == 0) {
+            if (millis() - timeout > DEFAULT_REQUEST_TIMEOUT) {
+                log_info("Timeout reached");
+                return false;
+            }
+        }
         // Read the response
         int statusCode = readResponse(&_netClient, response);
          if(statusCode >= 300) {
@@ -227,55 +235,62 @@ class Constellation
         // This will send the request to the server
         client->print("GET " + url + " HTTP/1.1\r\n" +
                    "Host: " + this->_constellationHost + "\r\n" + 
+                   "Accept-Encoding: identity\r\n" +
                    "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n"); 
         return true;
     };
     int readResponse(TNetworkClass* client, String* response) {
-        boolean currentLineIsBlank = true;
-        boolean httpBody = false;
-        boolean inStatus = false;
-        char statusCode[4];
-        int i = 0;
-        int code = 0;
-        if (client->connected()) {
-            while (client->available()) {
-                char c = client->read();
-                if(c == ' ' && !inStatus) {
-                    inStatus = true;
+        int statusCode = 0;
+        if (!client->connected())
+            return statusCode;
+
+        bool isChunked = false;
+        bool isStatusLine = true;
+        bool isBody = false;
+        while (client->available())
+        {
+            String line = client->readStringUntil('\r');
+            if (!isBody) // Header
+            {
+                line.trim();
+                if (isStatusLine) // first line
+                {
+                    int spaceIndex = line.indexOf(' ');
+                    statusCode = line.substring(spaceIndex + 1, spaceIndex + 4).toInt();
+                    isStatusLine = false;
+                    continue;
                 }
-                if(inStatus && i < 3 && c != ' '){
-                    statusCode[i] = c;
-                    i++;
+                if (line.equals("Transfer-Encoding: chunked"))
+                {
+                    isChunked = true;
+                    continue;
                 }
-                if(i == 3){
-                    statusCode[i] = '\0';
-                    code = atoi(statusCode);
+                if (line.length() == 0) // End of the header
+                    isBody = true;
+            }
+            else
+            {
+                if (response == NULL) // No response expected
+                    continue;
+  
+                if (!isChunked)
+                {
+                    response->concat(line);
                 }
-                if(httpBody){
-                    //only write response if its not null
-                    if(response != NULL) {
-                        response->concat(c);
-                    }
-                }
-                else {
-                    if (c == '\n' && currentLineIsBlank) {
-                        httpBody = true;
-                    }
-                    if (c == '\n') {
-                        // you're starting a new line
-                        currentLineIsBlank = true;
-                    }
-                    else if (c != '\r') {
-                        // you've gotten a character on the current line
-                        currentLineIsBlank = false;
-                    }
+                else
+                {
+                    long chunckLength = strtol(line.c_str(), NULL, 16);
+                    client->read(); // purge the carriage return
+                    for (long i = 0; client->available() && i < chunckLength; ++i)
+                        response->concat((char)client->read());
                 }
             }
         }
-        if(response != NULL) {
+
+        if(response != NULL)
             log_debug("Raw message: : %s", response->c_str());
-        }
-        return code;
+
+        return statusCode;
     };
     String urlEncode(const char* msg) {
         // Unreserved Characters = ALPHA / DIGIT / "-" / "." / "_" / "~"
@@ -576,7 +591,7 @@ class Constellation
     bool subscribeToMessage(bool renew = false) {
         if(this->_msgSubscriptionId == NULL) {
             String response = "";
-            if(sendRequest("SubscribeToMessage", NULL, 0, &response) == HTTP_OK && response.length() == SUBSCRIPTIONID_SIZE + 2) {
+            if(sendRequest("SubscribeToMessage", NULL, 0, &response) == HTTP_OK /*&& response.length() == SUBSCRIPTIONID_SIZE + 2*/) {
                 static char subId[SUBSCRIPTIONID_SIZE + 1];
                 response.substring(1, SUBSCRIPTIONID_SIZE + 2).toCharArray(subId, sizeof(subId));
                 this->_msgSubscriptionId = subId;
