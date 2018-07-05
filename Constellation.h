@@ -2,13 +2,13 @@
 /*!
     @file     Constellation.h
     @author   Sebastien Warin (http://sebastien.warin.fr)
-    @version  2.2.17248
+    @version  2.4.18186
 
     @section LICENSE
 
     Constellation License Agreement
 
-    Copyright (c) 2015-2017, Sebastien Warin
+    Copyright (c) 2015-2018, Sebastien Warin
     All rights reserved.
 
     By receiving, opening the file package, and/or using Constellation 1.8("Software")
@@ -34,6 +34,7 @@
 #include <cstdarg>
 #endif
 
+#include <base64.h>
 #include <Client.h>
 #include <ArduinoJson.h>
 #include "BaseDefinitions.h"
@@ -47,7 +48,7 @@
 #define DEFAULT_SUBSCRIPTION_TIMEOUT 60000
 #define DEFAULT_SUBSCRIPTION_LIMIT 1
 #define SUBSCRIPTIONID_SIZE 36
-#define DEFAULT_REQUEST_TIMEOUT 30000
+#define DEFAULT_REQUEST_TIMEOUT 5000
 
 template<typename TNetworkClass>
 class Constellation
@@ -62,10 +63,14 @@ class Constellation
     const char* _accessKey;
     const char* _msgSubscriptionId;
     const char* _soSubscriptionId;
+    const char* _base64Authorization;
+    const char* _userAgent = DEFAULT_HTTP_USERAGENT;
+    uint16_t _httpTimeout = DEFAULT_REQUEST_TIMEOUT;
     uint8_t _debugMode = (uint8_t)Info;
     void (*_msgCallback)(JsonObject&);
     void (*_msgCallbackWithContext)(JsonObject&, MessageContext);
     void (*_soCallback)(JsonObject&);
+    bool (*_onClientConnected)(TNetworkClass&);
     typedef struct {
         MessageCallbackDescriptor descriptor;
         MESSAGE_CALLBACK_SIGNATURE;
@@ -139,18 +144,10 @@ class Constellation
         }
     };
     String createUri(const char* method, const char * args[], int argsSize) {
-        String url = this->_constellationPath;
-        url += "/rest/constellation/";
-        url += method;
-        url += "?SentinelName=";
-        url += this->_sentinelName;
-        url += "&PackageName=";
-        url += this->_packageName;
-        url += "&AccessKey=";
-        url += this->_accessKey;
+        String url = String(this->_constellationPath) + method;
         if(args != NULL) {
             for (int i = 0; i + 1 < argsSize * 2; i+=2){
-                url += "&";
+                url += (i == 0) ? "?" : "&";
                 url += args[i];
                 url += "=";
                 url += urlEncode(args[i + 1]);
@@ -161,29 +158,44 @@ class Constellation
     int sendPostRequest(const char* method, JsonObject& content, String* response) {
         // Send request
         if (!_netClient.connected() && !_netClient.connect(this->_constellationHost, this->_constellationPort)) {
-            log_info("Unable to establish the TCP connection to %s:%d (POST on %s)", this->_constellationHost, this->_constellationPort, method);
+            log_error("Unable to establish the TCP connection to %s:%d (POST on %s)", this->_constellationHost, this->_constellationPort, method);
+            return false;
+        }
+        // Verify the client connection
+        if(this->_onClientConnected && !this->_onClientConnected(_netClient)) {
+            log_error("Unable to verify the network client connection");            
             return false;
         }
         // We now create a URI for the request
         String url = createUri(method, NULL, 0);
-        // This will send the request to the server
+        // Prepare the request        
         static BufferedPrint<NETCLIENT_BUFFER_SIZE> buffer(_netClient);
         log_debug("POST: %s", url.c_str());
-        buffer.setDebug((this->_debugMode >= (int8_t)Debug));
+        buffer.setDebug((this->_debugMode >= (int8_t)Trace));
         int contentLength = content.measureLength();
-        buffer.print("POST " + url + " HTTP/1.1\r\n" +
-                       "Host: " + this->_constellationHost + "\r\n" + 
-                       "Content-Length: " + contentLength + "\r\n" + 
-                       "Content-Type: application/json\r\n" + 
-                       "Connection: keep-alive\r\n\r\n");
+        String request = "POST " + url + " HTTP/1.1\r\n" +
+                        "Host: " + this->_constellationHost + "\r\n" +                        
+                        "SentinelName: " + this->_sentinelName + "\r\n"  +
+                        "PackageName: " + this->_packageName + "\r\n"  +
+                        "AccessKey: " + this->_accessKey + "\r\n"  +                        
+                        "User-Agent: " + this->_userAgent + "\r\n"  +
+                        "Accept-Encoding: identity\r\n" +
+                        "Content-Length: " + contentLength + "\r\n"  +
+                        "Content-Type: application/json\r\n" +
+                        "Connection: keep-alive\r\n";
+        if(this->_base64Authorization) {
+            request += String("Authorization: Basic ") + this->_base64Authorization + "\r\n";
+        }
+        request += "\r\n";
+        // This will send the request to the server
+        buffer.print(request);
         content.printTo(buffer);
         buffer.print("\r\n\r\n");
         buffer.flush();
-        delay(10);
         // Read the response
         int statusCode = readResponse(&_netClient, response);
         if(statusCode >= 300) {
-            log_info("Incorrect response: %d", statusCode);
+            log_error("Incorrect response: %d", statusCode);
             if(response != NULL) {
                 log_debug(response->c_str());
             }
@@ -198,21 +210,13 @@ class Constellation
     int sendRequest(const char* method, const char * args[], int argsSize, String* response) {
         // Send request
         if(!writeRequest(&_netClient, method, args, argsSize, true)) {
-            log_info("Unable to send the request !");
+            log_error("Unable to send the request !");
             return false;
-        }
-        // Wait a response
-        unsigned long timeout = millis();
-        while (_netClient.available() == 0) {
-            if (millis() - timeout > DEFAULT_REQUEST_TIMEOUT) {
-                log_info("Timeout reached");
-                return false;
-            }
         }
         // Read the response
         int statusCode = readResponse(&_netClient, response);
          if(statusCode >= 300) {
-            log_info("Incorrect response: %d", statusCode);
+            log_error("Incorrect response: %d", statusCode);
             if(response != NULL) {
                 log_debug(response->c_str());
             }
@@ -226,72 +230,117 @@ class Constellation
     };
     bool writeRequest(TNetworkClass* client, const char* method, const char * args[], int argsSize, bool keepAlive) {
         if (!client->connected() && !client->connect(this->_constellationHost, this->_constellationPort)) {
-            log_info("Unable to establish the TCP connection to %s:%d (GET on %s)", this->_constellationHost, this->_constellationPort, method);
+            log_error("Unable to establish the TCP connection to %s:%d (GET on %s)", this->_constellationHost, this->_constellationPort, method);
+            return false;
+        }
+        // Verify the client connection
+        if(this->_onClientConnected && !this->_onClientConnected(_netClient)) {
+            log_error("Unable to verify the network client connection");            
             return false;
         }
         // We now create a URI for the request
         String url = createUri(method, args, argsSize);
         log_debug("GET: %s", url.c_str());
+        // Prepare the request
+        String request = "GET " + url + " HTTP/1.1\r\n" +
+                        "Host: " + this->_constellationHost + "\r\n" +                        
+                        "SentinelName: " + this->_sentinelName + "\r\n"  +
+                        "PackageName: " + this->_packageName + "\r\n"  +
+                        "AccessKey: " + this->_accessKey + "\r\n"  +                        
+                        "User-Agent: " + this->_userAgent + "\r\n" +
+                        "Accept-Encoding: identity\r\n" +
+                        "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n";
+        if(this->_base64Authorization) {
+            request += String("Authorization: Basic ") + this->_base64Authorization + "\r\n";
+        }
+        request += "\r\n";
         // This will send the request to the server
-        client->print("GET " + url + " HTTP/1.1\r\n" +
-                   "Host: " + this->_constellationHost + "\r\n" + 
-                   "Accept-Encoding: identity\r\n" +
-                   "Connection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n"); 
+        client->print(request);
         return true;
     };
+    
     int readResponse(TNetworkClass* client, String* response) {
         int statusCode = 0;
-        if (!client->connected())
+        if (!client->connected()) {
             return statusCode;
-
+        }
+        // Wait for response
+        unsigned long timeout = millis();
+        while (client->available() == 0) {
+            if ((millis() - timeout) > this->_httpTimeout) {
+                log_error("HTTP Timeout reached");
+                return 0;
+            }
+        }
+        String line;
         bool isChunked = false;
-        bool isStatusLine = true;
+        bool firstLine = true;
         bool isBody = false;
-        while (client->available())
-        {
-            String line = client->readStringUntil('\r');
-            if (!isBody) // Header
-            {
+        // Read the response
+        while (client->available()) {            
+            if (!isBody) { // Read the header                 
+                line = client->readStringUntil('\n');
                 line.trim();
-                if (isStatusLine) // first line
-                {
+                log_trace("> %s", line.c_str());
+                if (firstLine && line.length() > 0) { // first line
                     int spaceIndex = line.indexOf(' ');
                     statusCode = line.substring(spaceIndex + 1, spaceIndex + 4).toInt();
-                    isStatusLine = false;
-                    continue;
+                    firstLine = false;
                 }
-                if (line.equals("Transfer-Encoding: chunked"))
-                {
+                else if (!firstLine && line.equals("Transfer-Encoding: chunked")) {
                     isChunked = true;
-                    continue;
                 }
-                if (line.length() == 0) // End of the header
+                else if (statusCode > 0 && line.length() == 0) { // End of the header
                     isBody = true;
-            }
-            else
-            {
-                if (response == NULL) // No response expected
-                    continue;
-  
-                if (!isChunked)
-                {
-                    response->concat(line);
                 }
-                else
-                {
-                    long chunckLength = strtol(line.c_str(), NULL, 16);
-                    client->read(); // purge the carriage return
-                    for (long i = 0; client->available() && i < chunckLength; ++i)
-                        response->concat((char)client->read());
+            }
+            else {
+                if (response == NULL) {// No response expected
+                    break;
+                }
+                if (!isChunked) {
+                    response->concat((char)client->read());
+                }
+                else {
+                    while(true) {
+                        if(!client->connected()) {
+                            log_error("Connection lost while reading the chunked response");
+                            break; 
+                        }
+                        line = client->readStringUntil('\n');
+                        if(line.length() <= 0) {
+                            break;
+                        }
+                        line.trim();
+                        // read size of chunk
+                        long chunckLength = strtol((const char *) line.c_str(), NULL, 16);
+                        log_trace("chunckLength: %d", chunckLength);
+                        // data left?
+                        if(chunckLength > 0) {
+                            for (long i = 0; client->available() && i < chunckLength; ++i) {
+                                response->concat((char)client->read());
+                            }
+                        } else {
+                             break;                           
+                        }
+                        // read trailing \r\n at the end of the chunk
+                        char buf[2];
+                        auto trailing_seq_len = client->readBytes((uint8_t*)buf, 2);
+                        if (trailing_seq_len != 2 || buf[0] != '\r' || buf[1] != '\n') {
+                            log_debug("Reading timeout");
+                            break;
+                        }
+                        delay(0);
+                    }
                 }
             }
         }
-
-        if(response != NULL)
-            log_debug("Raw message: : %s", response->c_str());
-
+        log_trace("HTTP response code: %d", statusCode);
+        if(response != NULL) {
+            log_debug("Raw message: %s", response->c_str());
+        }
         return statusCode;
-    };
+    };    
     String urlEncode(const char* msg) {
         // Unreserved Characters = ALPHA / DIGIT / "-" / "." / "_" / "~"
         // http://www.ietf.org/rfc/rfc3986.txt
@@ -442,7 +491,6 @@ class Constellation
         checkIncomingMessage(timeout, limit);
         checkStateObjectUpdate(timeout, limit);
     };
-
     void checkIncomingMessage() {
         checkIncomingMessage(DEFAULT_SUBSCRIPTION_TIMEOUT, DEFAULT_SUBSCRIPTION_LIMIT);
     };
@@ -472,7 +520,7 @@ class Constellation
                                 ctx.sender.type = (SenderType)array[i]["Sender"]["Type"].as<uint8_t>();
                                 ctx.sender.friendlyName = array[i]["Sender"]["FriendlyName"].as<char *>();
                                 ctx.sender.connectionId = array[i]["Sender"]["ConnectionId"].as<char *>();
-                                log_debug("Receiving message %s from %s\n", ctx.messageKey, ctx.sender.friendlyName);
+                                log_debug("Receiving message %s from %s", ctx.messageKey, ctx.sender.friendlyName);
                                 if(_msgCallback) {
                                     log_debug("Invoking MessageReceiveCallback registered without context");
                                     _msgCallback(array[i]);
@@ -485,7 +533,7 @@ class Constellation
                                     MessageCallbackSubscription mc = _msgCallbacks.get(j);
                                     if (mc.id && (mc.msgCallback || mc.msgCallbackWithContext) &&
                                         (mc.isSagaCallback ? ctx.sagaId != NULL : true) &&
-                                        stricmp (mc.isSagaCallback ? ctx.sagaId : ctx.messageKey, mc.id) == 0) {
+                                        strcmp (mc.isSagaCallback ? ctx.sagaId : ctx.messageKey, mc.id) == 0) {
                                         if(mc.msgCallback) {
                                             log_debug("Invoking MessageCallback '%s' without context", mc.id);
                                             mc.msgCallback(array[i]);
@@ -556,10 +604,10 @@ class Constellation
                                     const char * type = array[i]["StateObject"]["Type"].as<char *>();
                                     for(int j = 0; j < _soCallbacks.size(); j++) {
                                         StateObjectSubscription subcription = _soCallbacks.get(j);
-                                        if( (stricmp (sentinel, subcription.sentinel) == 0 || stricmp (WILDCARD, subcription.sentinel) == 0) &&
-                                            (stricmp (package, subcription.package) == 0 || stricmp (WILDCARD, subcription.package) == 0) &&
-                                            (stricmp (name, subcription.name) == 0 || stricmp (WILDCARD, subcription.name) == 0) &&
-                                            (stricmp (type, subcription.type) == 0 || stricmp (WILDCARD, subcription.type) == 0)) {
+                                        if( (strcmp (sentinel, subcription.sentinel) == 0 || strcmp (WILDCARD, subcription.sentinel) == 0) &&
+                                            (strcmp (package, subcription.package) == 0 || strcmp (WILDCARD, subcription.package) == 0) &&
+                                            (strcmp (name, subcription.name) == 0 || strcmp (WILDCARD, subcription.name) == 0) &&
+                                            (strcmp (type, subcription.type) == 0 || strcmp (WILDCARD, subcription.type) == 0)) {
                                             log_debug("Invoking StateObjectLink registered for %s/%s/%s/%s", subcription.sentinel, subcription.package, subcription.name, subcription.type);
                                             subcription.soCallback(array[i]["StateObject"]);
                                         }
@@ -591,7 +639,7 @@ class Constellation
     bool subscribeToMessage(bool renew = false) {
         if(this->_msgSubscriptionId == NULL) {
             String response = "";
-            if(sendRequest("SubscribeToMessage", NULL, 0, &response) == HTTP_OK /*&& response.length() == SUBSCRIPTIONID_SIZE + 2*/) {
+            if(sendRequest("SubscribeToMessage", NULL, 0, &response) == HTTP_OK && response.length() == SUBSCRIPTIONID_SIZE + 2) {
                 static char subId[SUBSCRIPTIONID_SIZE + 1];
                 response.substring(1, SUBSCRIPTIONID_SIZE + 2).toCharArray(subId, sizeof(subId));
                 this->_msgSubscriptionId = subId;
@@ -926,7 +974,17 @@ class Constellation
     Constellation& setServer(const char * constellationHost, uint16_t constellationPort, const char * path){
         this->_constellationHost = constellationHost;
         this->_constellationPort = constellationPort;
-        this->_constellationPath = path;
+        // Generate the base URI path
+        static String strPath;
+        strPath = String(path);
+        if(!strPath.startsWith("/")) {
+            strPath = "/" + strPath;
+        }
+        if(!strPath.endsWith("/")) {
+            strPath += "/";
+        }
+        strPath += "rest/constellation/";
+        this->_constellationPath = strPath.c_str();
         return *this;
     };
     Constellation& setIdentity(const char * sentinel, const char * package, const char * accessKey){
@@ -954,6 +1012,35 @@ class Constellation
         this->_debugMode = (uint8_t)mode;
         return *this;
     };
+    Constellation& setAuthorization(const char * user, const char * password) {
+        if(user && password) {
+            String auth = user;
+            auth += ":";
+            auth += password;
+            this->_base64Authorization = base64::encode(auth).c_str();
+        }
+        return *this;
+    };
+    Constellation& setAuthorization(const char * auth) {
+        if(auth) {
+            this->_base64Authorization = auth;
+        }
+        return *this;
+    }; 
+    Constellation& setUserAgent(const char * userAgent) {
+        if(userAgent) {
+            this->_userAgent = userAgent;
+        }
+        return *this;
+    }; 
+    Constellation& setTimeout(uint16_t timeout) {
+        this->_httpTimeout = timeout;
+        return *this;
+    };
+    Constellation& onClientConnected(bool (*onClientConnected)(TNetworkClass&)) {
+        this->_onClientConnected = onClientConnected;
+        return *this;
+    };   
 };
 
 const char* stringFormat(const char* format, ...) {

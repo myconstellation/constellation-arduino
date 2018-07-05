@@ -2,13 +2,13 @@
 /*! 
     @file     PackageDescriptor.h
     @author   Sebastien Warin (http://sebastien.warin.fr)
-    @version  2.2.17248
+    @version  2.4.18186
 
     @section LICENSE
 
     Constellation License Agreement
 
-    Copyright (c) 2015-2017, Sebastien Warin
+    Copyright (c) 2015-2018, Sebastien Warin
     All rights reserved.
 
     By receiving, opening the file package, and/or using Constellation 1.8("Software")

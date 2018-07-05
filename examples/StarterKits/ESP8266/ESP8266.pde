@@ -5,7 +5,7 @@
 char ssid[] = "YOUR_SSID";
 char password[] = "YOUR_WIFI_PASSWORD";
 
-// Constellation client
+// Constellation client (use WiFiClientSecure for SSL)
 Constellation<WiFiClient> constellation("IP_or_DNS_CONSTELLATION_SERVER", 8088, "YOUR_SENTINEL_NAME", "YOUR_PACKAGE_NAME", "YOUR_ACCESS_KEY");
 
 void setup(void) {

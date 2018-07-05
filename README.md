@@ -4,7 +4,7 @@ This is an Arduino/ESP library for Constellation 1.8.
 
 Web site : [http://developer.myconstellation.io](http://developer.myconstellation.io)
 
-This library use the [Arduino JSON library](https://github.com/bblanchon/ArduinoJson) to encode & decode JSON.
+This library use the [Arduino JSON library](https://github.com/bblanchon/ArduinoJson) (version 5.x) to encode & decode JSON.
 
 Quick start
 -------------
@@ -21,7 +21,7 @@ License
 
 Constellation License Agreement
 
-Copyright (c) 2015-2017, Sebastien Warin
+Copyright (c) 2015-2018, Sebastien Warin
 All rights reserved.
 
 By receiving, opening the file package, and/or using Constellation 1.8("Software")

@@ -45,6 +45,10 @@ setIdentity	KEYWORD2
 setMessageReceiveCallback	KEYWORD2
 setStateObjectUpdateCallback	KEYWORD2
 setDebugMode	KEYWORD2
+onClientConnected	KEYWORD2
+setAuthorization	KEYWORD2
+setUserAgent	KEYWORD2
+setTimeout	KEYWORD2
 stringFormat	KEYWORD2
 MessageCallbackDescriptor	KEYWORD1
 TypeDescriptor	KEYWORD1
