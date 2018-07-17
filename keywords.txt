@@ -7,9 +7,9 @@ Package	KEYWORD2
 Sentinel	KEYWORD2
 Other	KEYWORD2
 All	KEYWORD2
-LogLevel KEYWORD1
-SenderType KEYWORD1
-DescriptorType KEYWORD1
+LogLevel	KEYWORD1
+SenderType	KEYWORD1
+DescriptorType	KEYWORD1
 MemberInfo	KEYWORD1
 getSentinelName	KEYWORD2
 getPackageName	KEYWORD2
